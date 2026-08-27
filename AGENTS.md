@@ -25,6 +25,19 @@ App (Capacitor/Vue)  -->  API Gateway  -->  Lambda (this)  -->  SEFAZ
 
 **NUNCA** faça commit/push/deploy sem confirmação explícita do usuário.
 
+### Opção 1: GitHub Actions (automático)
+
+O workflow está em `.github/workflows/deploy.yml`. A cada push na `main`, o Actions:
+1. Roda `npm ci && npm run build`
+2. Gera `lambda.zip` via `zip -r` (Linux)
+3. Executa `aws lambda update-function-code --function-name nfce-parser`
+
+Requer secrets no repositório:
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+### Opção 2: Manual (console AWS)
+
 O comando único para gerar o pacote de deploy:
 
 ```bash
@@ -36,12 +49,12 @@ Isso executa:
 2. `npm run build` — compila TypeScript (`tsc`)
 3. `npm run zip` — cria `lambda.zip` contendo `dist/`, `node_modules/`, `package.json`
 
-O deploy na AWS é **manual** via console:
+Deploy via console:
 - Console AWS > Lambda > Função `nfce-parser`
 > Código > Upload from > .zip file
 > Selecionar `lambda.zip`
 
-**Nota**: O comando `zip` usa PowerShell (`Compress-Archive`). Funciona no Windows. Se o ambiente for Linux/Mac, pode ser necessário usar `zip -r lambda.zip dist node_modules package.json`.
+**Nota**: O comando `npm run zip` usa PowerShell (`Compress-Archive`). Funciona no Windows. No Linux/Mac do GitHub Actions, usa-se `zip -r lambda.zip dist node_modules package.json`.
 
 ## Convenções de código
 
