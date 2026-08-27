@@ -23,10 +23,18 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     }
 
     // Valida se a URL é parseável antes de passar pro axios
+    let nfceUrl: URL;
     try {
-      new URL(url);
+      nfceUrl = new URL(url);
     } catch {
       return response(400, { error: "URL malformada" });
+    }
+
+    if (nfceUrl.hostname !== "sp.gov.br" && !nfceUrl.hostname.endsWith(".sp.gov.br")) {
+      return response(422, {
+        code: "UNSUPPORTED_STATE",
+        error: "Ainda não oferecemos suporte para notas fiscais deste estado.",
+      });
     }
 
     console.log("Fetching NFC-e URL:", url);
@@ -78,18 +86,13 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     }
 
     let parsed;
-
-    if (url.includes("sp.gov.br")) {
-      try {
-        parsed = parseSP(html);
-      } catch (parseErr: any) {
-        console.error("Erro ao fazer parse do HTML:", parseErr.message);
-        return response(502, {
-          error: "Erro ao interpretar a página da nota. Layout pode ter mudado.",
-        });
-      }
-    } else {
-      parsed = parseFallback(html);
+    try {
+      parsed = parseSP(html);
+    } catch (parseErr: any) {
+      console.error("Erro ao fazer parse do HTML:", parseErr.message);
+      return response(502, {
+        error: "Erro ao interpretar a página da nota. Layout pode ter mudado.",
+      });
     }
 
     if (isEmptyResult(parsed)) {
@@ -203,23 +206,6 @@ function parseSP(html: string) {
     purchaseDate,
     total,
     items,
-  };
-}
-
-//
-// ==========================
-// FALLBACK
-// ==========================
-//
-
-function parseFallback(html: string) {
-  const $ = cheerio.load(html);
-
-  return {
-    marketName: $("strong").first().text().trim(),
-    purchaseDate: "",
-    total: 0,
-    items: [],
   };
 }
 
