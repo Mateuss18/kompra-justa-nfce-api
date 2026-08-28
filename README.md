@@ -52,13 +52,23 @@ Recebe uma URL da NFC-e (ex: `https://www.nfce.fazenda.sp.gov.br/...`), consulta
 
 ## Como fazer deploy
 
-### Pré-requisitos
+### Opção 1: Deploy automático via GitHub Actions (recomendado)
 
-- Node.js instalado
-- Conta AWS com acesso ao Lambda e API Gateway
-- Variável de ambiente `VITE_NFCE_API_BASE_URL` configurada no front-end (projeto irmão `kompra-justa`)
+O projeto já tem um workflow configurado em `.github/workflows/deploy.yml`. A cada push na branch `main`, o GitHub Actions compila e faz upload do código direto pra Lambda.
 
-### Passo a passo
+#### Configuração única
+
+1. No Console AWS, crie um usuário IAM com permissão `lambda:UpdateFunctionCode` na função `nfce-parser`.
+2. Copie o **Access Key ID** e **Secret Access Key**.
+3. No repositório GitHub, vá em **Settings > Secrets and variables > Actions > New repository secret** e adicione:
+   - `AWS_ACCESS_KEY_ID`
+   - `AWS_SECRET_ACCESS_KEY`
+
+Pronto! Da próxima vez que der `git push` na `main`, o deploy acontece sozinho. Você também pode acionar manualmente em **Actions > Deploy to AWS Lambda > Run workflow**.
+
+### Opção 2: Deploy manual pelo console AWS
+
+Use essa opção se precisar fazer deploy sem usar o GitHub Actions.
 
 1. **Instalar dependências** (se necessário):
    ```bash
@@ -76,7 +86,7 @@ Recebe uma URL da NFC-e (ex: `https://www.nfce.fazenda.sp.gov.br/...`), consulta
 
 3. **Fazer upload na AWS**:
    - Acesse o [Console AWS Lambda](https://sa-east-1.console.aws.amazon.com/lambda)
-   - Encontre a função `nfce-parser` (ou o nome que você deu)
+   - Encontre a função `nfce-parser`
    - Vá em **Código** > **Upload from** > **.zip file**
    - Selecione o arquivo `lambda.zip` gerado na raiz do projeto
    - A função já está configurada com o handler `dist/handler.handler`
@@ -121,7 +131,7 @@ kompra-justa-nfce-api/
 
 ## Suporte a estados
 
-Atualmente há parser otimizado para **São Paulo (SP)**. Outros estados usam um fallback genérico. Para adicionar suporte a outro estado, crie uma função `parseXX(html)` no `handler.ts` e adicione a condição no roteamento.
+Atualmente há suporte apenas para **São Paulo (SP)**. Notas de outros estados recebem `422` com o código `UNSUPPORTED_STATE`. Para adicionar suporte a outro estado, crie uma função `parseXX(html)` no `handler.ts` e adicione a condição no roteamento.
 
 ## Notas importantes
 
