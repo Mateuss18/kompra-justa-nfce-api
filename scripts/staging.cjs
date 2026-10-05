@@ -93,7 +93,7 @@ async function run() {
   result.resources.functionName = name;
   result.resources.functionArn = lambda.FunctionArn;
   save();
-  aws("lambda", "wait", "function-active-v2", "--function-name", name);
+  aws("lambda", "wait", "function-active", "--function-name", name);
   const cors = productionApi.CorsConfiguration || {
     AllowOrigins: ["*"],
     AllowMethods: ["POST", "OPTIONS"],
