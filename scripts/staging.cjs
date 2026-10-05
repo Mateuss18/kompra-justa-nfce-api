@@ -113,35 +113,15 @@ async function run() {
     JSON.stringify(cors),
     "--tags",
     JSON.stringify(tags),
+    "--target",
+    lambda.FunctionArn,
+    "--route-key",
+    "POST /nfce/parse",
   );
   assert.notEqual(api.ApiId, productionApiId);
   result.resources.apiId = api.ApiId;
   result.resources.endpoint = api.ApiEndpoint;
   save();
-  const integration = aws(
-    "apigatewayv2",
-    "create-integration",
-    "--api-id",
-    api.ApiId,
-    "--integration-type",
-    "AWS_PROXY",
-    "--integration-method",
-    "POST",
-    "--integration-uri",
-    lambda.FunctionArn,
-    "--payload-format-version",
-    "1.0",
-  );
-  aws(
-    "apigatewayv2",
-    "create-route",
-    "--api-id",
-    api.ApiId,
-    "--route-key",
-    "POST /nfce/parse",
-    "--target",
-    `integrations/${integration.IntegrationId}`,
-  );
   const account = lambda.FunctionArn.split(":")[4];
   aws(
     "lambda",
@@ -156,15 +136,6 @@ async function run() {
     "apigateway.amazonaws.com",
     "--source-arn",
     `arn:aws:execute-api:${region}:${account}:${api.ApiId}/*/POST/nfce/parse`,
-  );
-  aws(
-    "apigatewayv2",
-    "create-stage",
-    "--api-id",
-    api.ApiId,
-    "--stage-name",
-    "$default",
-    "--auto-deploy",
   );
   console.log(`Staging endpoint: ${api.ApiEndpoint}`);
   const endpoint = `${api.ApiEndpoint}/nfce/parse`;

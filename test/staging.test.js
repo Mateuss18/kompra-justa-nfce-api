@@ -91,6 +91,11 @@ async function check(ref) {
     assert.equal(result.status, "http-contract-passed", result.error);
     assert.equal(result.checks.length, 4);
     for (const args of commands) {
+      assert.ok(!["create-integration", "create-route", "create-stage"].includes(args[1]));
+      if (args[1] === "create-api") {
+        assert.ok(args.includes("--target"));
+        assert.ok(args.includes("POST /nfce/parse"));
+      }
       if (args[0] === "lambda" && args[1] !== "get-function-configuration") {
         assert.ok(!args.includes("nfce-parser"));
       }
