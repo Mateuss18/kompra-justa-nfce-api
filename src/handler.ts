@@ -1,10 +1,49 @@
 import { APIGatewayProxyHandler } from "aws-lambda";
 import axios, { AxiosError } from "axios";
 import * as cheerio from "cheerio";
+import { randomUUID } from "node:crypto";
 
-export const handler: APIGatewayProxyHandler = async (event) => {
+export const handler: APIGatewayProxyHandler = async (event, context) => {
+  const requestId = context?.awsRequestId || randomUUID();
+  let stage = "validation";
+  let uf = "unknown";
+  let host = "unknown";
+  let upstreamCode: string | undefined;
+  const fail = (
+    status: number,
+    code: string,
+    error: string,
+    upstreamStatus?: number,
+  ) => {
+    const diagnostics = {
+      requestId,
+      stage,
+      uf,
+      host,
+      code,
+      statusCode: status,
+      upstreamStatus,
+      upstreamCode,
+    };
+    console.error(
+      JSON.stringify({ event: "nfce_parse_failed", ...diagnostics }),
+    );
+    return response(
+      status,
+      { error, code, stage, requestId, upstreamStatus, upstreamCode },
+      requestId,
+    );
+  };
   try {
-    const body = JSON.parse(event.body || "{}");
+    let body: { url?: string };
+    try {
+      body = JSON.parse(event.body || "{}");
+    } catch {
+      return fail(400, "INVALID_REQUEST", "Corpo da requisição inválido.");
+    }
+    if (!body || typeof body.url !== "string") {
+      return fail(400, "INVALID_URL", "URL inválida");
+    }
     let url: string = (body.url || "").trim();
 
     // Normaliza quebras de linha e espaços extras que podem vir do QR code
@@ -18,8 +57,8 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       url = url.replace("http://", "https://");
     }
 
-    if (!url || !url.includes("fazenda")) {
-      return response(400, { error: "URL inválida" });
+    if (!url) {
+      return fail(400, "INVALID_URL", "URL inválida");
     }
 
     // Valida se a URL é parseável antes de passar pro axios
@@ -27,94 +66,141 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     try {
       nfceUrl = new URL(url);
     } catch {
-      return response(400, { error: "URL malformada" });
+      return fail(400, "INVALID_URL", "URL malformada");
     }
 
-    if (nfceUrl.hostname !== "sp.gov.br" && !nfceUrl.hostname.endsWith(".sp.gov.br")) {
-      return response(422, {
-        code: "UNSUPPORTED_STATE",
-        error: "Ainda não oferecemos suporte para notas fiscais deste estado.",
-      });
+    const candidateUf = nfceUrl.hostname
+      .match(/(?:^|\.)([a-z]{2})\.gov\.br$/)?.[1]
+      ?.toUpperCase();
+    if (
+      candidateUf &&
+      /^(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)$/.test(
+        candidateUf,
+      )
+    ) {
+      uf = candidateUf;
+      host = `${uf.toLowerCase()}.gov.br`;
+    }
+    if (uf === "unknown" || nfceUrl.protocol !== "https:") {
+      return fail(400, "INVALID_URL", "URL inválida");
+    }
+    if (
+      nfceUrl.hostname !== "sp.gov.br" &&
+      !nfceUrl.hostname.endsWith(".sp.gov.br")
+    ) {
+      return fail(
+        422,
+        "UNSUPPORTED_STATE",
+        "Ainda não oferecemos suporte para notas fiscais deste estado.",
+      );
     }
 
-    console.log("Fetching NFC-e URL:", url);
+    stage = "sefaz_fetch";
 
     let html: string;
     try {
       html = await fetchNfce(url);
-    } catch (fetchErr: any) {
+    } catch (fetchErr: unknown) {
       const axiosErr = fetchErr as AxiosError;
+      if (
+        /^(ECONNABORTED|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ERR_NETWORK|ERR_BAD_RESPONSE|ERR_BAD_REQUEST|ERR_FR_TOO_MANY_REDIRECTS|CERT_HAS_EXPIRED|DEPTH_ZERO_SELF_SIGNED_CERT|UNABLE_TO_VERIFY_LEAF_SIGNATURE|ERR_TLS_CERT_ALTNAME_INVALID)$/.test(
+          axiosErr.code || "",
+        )
+      ) {
+        upstreamCode = axiosErr.code;
+      }
 
       if (axiosErr.code === "ECONNABORTED" || axiosErr.code === "ETIMEDOUT") {
-        return response(504, {
-          error:
-            "A consulta à SEFAZ demorou muito. Tente novamente em instantes.",
-        });
+        return fail(
+          504,
+          "SEFAZ_TIMEOUT",
+          "A consulta à SEFAZ demorou muito. Tente novamente em instantes.",
+        );
       }
 
       if (axiosErr.code === "ENOTFOUND" || axiosErr.code === "ECONNREFUSED") {
-        return response(502, {
-          error: "Não foi possível conectar à SEFAZ. Serviço pode estar indisponível.",
-        });
+        return fail(
+          502,
+          "SEFAZ_UNREACHABLE",
+          "Não foi possível conectar à SEFAZ. Serviço pode estar indisponível.",
+        );
       }
 
       if (axiosErr.response) {
         const status = axiosErr.response.status;
         if (status === 403 || status === 429) {
-          return response(503, {
-            error:
-              "A SEFAZ está bloqueando requisições temporariamente. Tente novamente mais tarde.",
-          });
+          return fail(
+            503,
+            "SEFAZ_RATE_LIMITED",
+            "A SEFAZ está bloqueando requisições temporariamente. Tente novamente mais tarde.",
+            status,
+          );
         }
         if (status >= 500) {
-          return response(502, {
-            error: "A SEFAZ retornou erro interno. Tente novamente mais tarde.",
-          });
+          return fail(
+            502,
+            "SEFAZ_SERVER_ERROR",
+            "A SEFAZ retornou erro interno. Tente novamente mais tarde.",
+            status,
+          );
         }
       }
 
-      return response(502, {
-        error: "Falha ao consultar a SEFAZ: " + (axiosErr.message || "Erro desconhecido"),
-      });
+      return fail(
+        502,
+        "SEFAZ_FETCH_FAILED",
+        "Falha ao consultar a SEFAZ. Tente novamente mais tarde.",
+        axiosErr.response?.status,
+      );
     }
 
+    stage = "parse";
     // Valida se o HTML parece ser uma página da NFC-e
     if (!html || html.length < 500) {
-      return response(502, {
-        error: "Resposta inesperada da SEFAZ. Página muito curta ou vazia.",
-      });
+      return fail(
+        502,
+        "SEFAZ_UNEXPECTED_RESPONSE",
+        "Resposta inesperada da SEFAZ. Página muito curta ou vazia.",
+      );
     }
 
     let parsed;
     try {
       parsed = parseSP(html);
-    } catch (parseErr: any) {
-      console.error("Erro ao fazer parse do HTML:", parseErr.message);
-      return response(502, {
-        error: "Erro ao interpretar a página da nota. Layout pode ter mudado.",
-      });
+    } catch {
+      return fail(
+        502,
+        "PARSE_LAYOUT_CHANGED",
+        "Erro ao interpretar a página da nota. Layout pode ter mudado.",
+      );
     }
 
     if (isEmptyResult(parsed)) {
-      return response(404, {
-        error:
-          "Nota ainda não disponível para consulta pública. Tente novamente em alguns minutos.",
-      });
+      return fail(
+        404,
+        "NFCE_NOT_AVAILABLE",
+        "Nota ainda não disponível para consulta pública. Tente novamente em alguns minutos.",
+      );
     }
 
-    return response(200, parsed);
-  } catch (err: any) {
-    console.error("Erro inesperado no handler:", err);
-    return response(500, { error: "Erro interno no servidor. Tente novamente." });
+    return response(200, parsed, requestId);
+  } catch {
+    return fail(
+      500,
+      "UNEXPECTED_ERROR",
+      "Erro interno no servidor. Tente novamente.",
+    );
   }
 };
 
-function response(status: number, data: any) {
+function response(status: number, data: unknown, requestId: string) {
   return {
     statusCode: status,
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "X-Request-Id",
+      "X-Request-Id": requestId,
     },
     body: JSON.stringify(data),
   };

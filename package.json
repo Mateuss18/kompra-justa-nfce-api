@@ -8,7 +8,7 @@
     "build": "tsc",
     "zip": "powershell -NoProfile -Command \"if (Test-Path lambda.zip) { Remove-Item lambda.zip }; Compress-Archive -Path dist, node_modules, package.json -DestinationPath lambda.zip\"",
     "package": "npm run clean && npm run build && npm run zip",
-    "test": "npm run build && node test/handler.test.js"
+    "test": "npm run build && node test/handler.test.js && node test/staging.test.js"
   },
   "keywords": [],
   "author": "",
